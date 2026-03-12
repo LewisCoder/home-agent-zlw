@@ -1,98 +1,107 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-简单的账单查询 Agent（优化版）
+账单查询 Agent（优化版）
 使用 LangGraph 的 ToolNode 和 tools_condition 实现自动化工具调用
+使用 MemorySaver checkpointer 实现多轮对话记忆
+使用滑动窗口截断历史消息，控制 token 消耗
 """
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage
-from agent_state import State
+from agent_state import State, MAX_HISTORY_TURNS
 from agent_nodes import AgentNodes
 from mcp_tools import mcp_tools, get_mcp_wrapper
 
 
 def build_workflow():
     """构建 LangGraph 工作流"""
-    # 初始化节点类
     nodes = AgentNodes()
 
-    # 创建工作流
     workflow = StateGraph(State)
 
-    # 添加节点
-    # 1. agent 节点：调用 LLM，决定是否使用工具
+    # agent 节点：调用 LLM，决定是否使用工具
     workflow.add_node("agent", nodes.call_model)
 
-    # 2. tools 节点：自动执行工具调用
+    # tools 节点：自动执行工具调用
     workflow.add_node("tools", ToolNode(mcp_tools))
 
-    # 添加边
-    # 从 START 到 agent
     workflow.add_edge(START, "agent")
 
-    # 从 agent 使用条件边：
-    # - 如果 LLM 返回了 tool_calls，则路由到 tools 节点
-    # - 否则，路由到 END
-    workflow.add_conditional_edges(
-        "agent",
-        tools_condition,
-    )
+    # 条件边：有 tool_calls 则去 tools，否则结束
+    workflow.add_conditional_edges("agent", tools_condition)
 
-    # 从 tools 回到 agent（形成循环，直到 LLM 不再调用工具）
+    # 工具执行完毕后回到 agent，继续推理
     workflow.add_edge("tools", "agent")
 
-    # 编译工作流
-    return workflow.compile(), nodes
+    # 启用 MemorySaver：跨轮次保存消息历史
+    # 配合 agent_nodes.py 中的 _trim_messages 控制 token 消耗
+    memory = MemorySaver()
+    return workflow.compile(checkpointer=memory), nodes
 
 
 def main():
     """主函数"""
     print("=" * 70)
-    print("🤖 账单查询智能助手（优化版 - 使用 ToolNode）")
+    print("🤖 账单查询智能助手")
     print("=" * 70)
-    print("\n💡 使用说明:")
-    print("   - 查询账单信息: GBILL260202111424630037")
-    print("   - 查询操作记录: 查询账单 GBILL260202111424630037 的操作记录")
-    print("   - 输入 'quit' 或 'exit' 退出\n")
+    print(f"\n💡 使用说明:")
+    print(f"   - 查询账单信息: GBILL260202111424630037")
+    print(f"   - 查询操作记录: 查询账单 GBILL260202111424630037 的操作记录")
+    print(f"   - 查询知识库: 出差补贴标准是什么")
+    print(f"   - 输入 'new' 开启新会话（清空历史）")
+    print(f"   - 输入 'quit' 或 'exit' 退出")
+    print(f"\n⚙️  当前配置: 保留最近 {MAX_HISTORY_TURNS} 轮对话历史\n")
 
-    # 构建工作流
     app, nodes = build_workflow()
-
-    # 获取 MCP 工具包装器
     mcp_wrapper = get_mcp_wrapper()
+
+    # thread_id 标识会话，相同 thread_id 共享消息历史
+    thread_id = "session_1"
+    config = {"configurable": {"thread_id": thread_id}}
+    turn = 0
 
     try:
         while True:
-            # 获取用户输入
-            user_input = input("👤 请输入账单代码或问题: ").strip()
+            user_input = input("👤 请输入问题: ").strip()
 
-            # 退出命令
             if user_input.lower() in ['quit', 'exit', 'q', '退出']:
                 print("\n👋 再见!")
                 break
 
-            # 空输入跳过
             if not user_input:
                 continue
 
-            print("\n" + "=" * 70)
+            # 开启新会话：换一个 thread_id 即可清空历史
+            if user_input.lower() in ['new', '新会话', '清空']:
+                turn = 0
+                thread_id = f"session_{id(user_input)}"
+                config = {"configurable": {"thread_id": thread_id}}
+                print("🔄 已开启新会话，历史已清空\n")
+                continue
 
-            # 调用工作流
-            result = app.invoke({
-                "messages": [HumanMessage(content=user_input)]
-            })
+            turn += 1
+            print(f"\n{'=' * 70}")
+            print(f"[第 {turn} 轮对话]")
 
-            # 输出最终答案
-            print("\n" + "=" * 70)
+            # checkpointer 会自动加载该 thread_id 的历史消息
+            # 只需传入本轮新消息即可
+            result = app.invoke(
+                {"messages": [HumanMessage(content=user_input)]},
+                config
+            )
+
+            print(f"\n{'=' * 70}")
             print("🤖 助手回答:")
             print("=" * 70)
-
-            # 获取最后一条消息（AI 的回复）
-            final_message = result["messages"][-1]
-            print(final_message.content)
+            print(result["messages"][-1].content)
             print("=" * 70)
+
+            # 打印当前历史消息数，方便观察 token 消耗
+            total_msgs = len(result["messages"])
+            print(f"📊 当前会话消息总数: {total_msgs} 条\n")
 
     except KeyboardInterrupt:
         print("\n\n👋 再见!")
@@ -101,7 +110,6 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
-        # 清理资源
         mcp_wrapper.cleanup()
 
 
