@@ -5,7 +5,9 @@ Agent 状态定义
 定义 LangGraph 工作流中使用的状态结构
 """
 
-from typing import TypedDict
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph.message import add_messages
 
 
 class State(TypedDict):
@@ -13,8 +15,5 @@ class State(TypedDict):
 
     用于 LangGraph 工作流中节点间传递的数据结构
     """
-    user_input: str  # 用户输入
-    bill_code: str  # 提取的账单代码
-    query_type: str  # 查询类型: "bill_info" 或 "operate_log"
-    mcp_result: str  # MCP 调用结果
-    final_answer: str  # 最终答案
+    # 使用 messages 字段存储对话历史，支持 LangGraph 的工具调用
+    messages: Annotated[list, add_messages]

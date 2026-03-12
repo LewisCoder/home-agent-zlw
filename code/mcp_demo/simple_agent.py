@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-简单的账单查询 Agent
-使用 LangGraph 构建,包含 3 个节点:意图理解、MCP调用、答案生成
+简单的账单查询 Agent（优化版）
+使用 LangGraph 的 ToolNode 和 tools_condition 实现自动化工具调用
 """
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_core.messages import HumanMessage
 from agent_state import State
 from agent_nodes import AgentNodes
+from mcp_tools import mcp_tools, get_mcp_wrapper
 
 
 def build_workflow():
@@ -18,16 +21,27 @@ def build_workflow():
     # 创建工作流
     workflow = StateGraph(State)
 
-    # 添加 3 个节点
-    workflow.add_node("understand", nodes.understand_intent)
-    workflow.add_node("mcp_call", nodes.call_mcp)
-    workflow.add_node("generate", nodes.generate_answer)
+    # 添加节点
+    # 1. agent 节点：调用 LLM，决定是否使用工具
+    workflow.add_node("agent", nodes.call_model)
 
-    # 添加静态边连接
-    workflow.add_edge(START, "understand")
-    workflow.add_edge("understand", "mcp_call")
-    workflow.add_edge("mcp_call", "generate")
-    workflow.add_edge("generate", END)
+    # 2. tools 节点：自动执行工具调用
+    workflow.add_node("tools", ToolNode(mcp_tools))
+
+    # 添加边
+    # 从 START 到 agent
+    workflow.add_edge(START, "agent")
+
+    # 从 agent 使用条件边：
+    # - 如果 LLM 返回了 tool_calls，则路由到 tools 节点
+    # - 否则，路由到 END
+    workflow.add_conditional_edges(
+        "agent",
+        tools_condition,
+    )
+
+    # 从 tools 回到 agent（形成循环，直到 LLM 不再调用工具）
+    workflow.add_edge("tools", "agent")
 
     # 编译工作流
     return workflow.compile(), nodes
@@ -36,7 +50,7 @@ def build_workflow():
 def main():
     """主函数"""
     print("=" * 70)
-    print("🤖 账单查询智能助手")
+    print("🤖 账单查询智能助手（优化版 - 使用 ToolNode）")
     print("=" * 70)
     print("\n💡 使用说明:")
     print("   - 查询账单信息: GBILL260202111424630037")
@@ -45,6 +59,9 @@ def main():
 
     # 构建工作流
     app, nodes = build_workflow()
+
+    # 获取 MCP 工具包装器
+    mcp_wrapper = get_mcp_wrapper()
 
     try:
         while True:
@@ -64,18 +81,17 @@ def main():
 
             # 调用工作流
             result = app.invoke({
-                "user_input": user_input,
-                "bill_code": "",
-                "query_type": "",
-                "mcp_result": "",
-                "final_answer": ""
+                "messages": [HumanMessage(content=user_input)]
             })
 
             # 输出最终答案
             print("\n" + "=" * 70)
             print("🤖 助手回答:")
             print("=" * 70)
-            print(result["final_answer"])
+
+            # 获取最后一条消息（AI 的回复）
+            final_message = result["messages"][-1]
+            print(final_message.content)
             print("=" * 70)
 
     except KeyboardInterrupt:
@@ -86,8 +102,9 @@ def main():
         traceback.print_exc()
     finally:
         # 清理资源
-        nodes.cleanup()
+        mcp_wrapper.cleanup()
 
 
 if __name__ == "__main__":
     main()
+

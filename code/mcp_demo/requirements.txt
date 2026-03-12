@@ -1,5 +1,12 @@
 langchain-openai==0.2.14
 langchain-core==0.3.28
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
 langgraph==0.2.59
 python-dotenv==1.0.1
 requests>=2.31.0
+# RAG 相关依赖
+faiss-cpu>=1.7.4
+dashscope>=1.14.0
+docx2txt>=0.8
+

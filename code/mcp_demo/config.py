@@ -46,6 +46,14 @@ class Config:
         # 分页配置
         self.default_page_size = 10
 
+        # RAG 配置
+        self.embedding_model = os.getenv('EMBEDDING_MODEL', 'text-embedding-v3')
+        self.knowledge_doc_path = Path(__file__).parent / os.getenv('KNOWLEDGE_DOC', 'knowledge.docx')
+        self.rag_chunk_size = int(os.getenv('RAG_CHUNK_SIZE', '500'))
+        self.rag_chunk_overlap = int(os.getenv('RAG_CHUNK_OVERLAP', '50'))
+        self.rag_top_k = int(os.getenv('RAG_TOP_K', '3'))
+        self.rag_score_threshold = float(os.getenv('RAG_SCORE_THRESHOLD', '1.0'))
+
     def validate(self) -> bool:
         """验证配置是否完整"""
         if not self.llm_api_key:
@@ -56,3 +64,4 @@ class Config:
 
 # 全局配置实例
 config = Config()
+

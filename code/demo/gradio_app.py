@@ -5,11 +5,10 @@ RAG智能助手 Gradio Web界面 - 美化版
 支持外网访问
 """
 
-import os
-import sys
-import re
 import json
-import time
+import os
+import re
+import sys
 
 # 设置控制台编码为UTF-8
 if sys.platform == "win32":
